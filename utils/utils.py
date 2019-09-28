@@ -19,24 +19,24 @@ from .io_utils import load_yaml, save_yaml
 FILE_PATH = os.path.abspath(os.path.dirname(__file__))
 RECOGNITION_PATH = os.path.abspath(FILE_PATH + '/..')
 
-def setup(args):
+def setup(config):
     torch.set_num_threads(0)
     cv2.setNumThreads(0)
     cv2.ocl.setUseOpenCL(False)
     os.environ['OMP_NUM_THREADS'] = '1'
 
-    if args.random_seed is None:
-        args.random_seed = random.randint(1, 10000)
+    if 'random_seed' not in config:
+        config['random_seed'] = random.randint(1, 10000)
 
     # print(" - Random Seed: ", args.random_seed)
-    random.seed(args.random_seed)
-    torch.manual_seed(args.random_seed)
+    random.seed(config['random_seed'])
+    torch.manual_seed(config['random_seed'])
 
-    if args.device == 'cuda':
+    if config['device'] == 'cuda':
         torch.backends.cudnn.benchmark = True
-        torch.cuda.manual_seed_all(args.random_seed)
+        torch.cuda.manual_seed_all(config['random_seed'])
 
-    ia.seed(args.random_seed)
+    ia.seed(config['random_seed'])
 
 def parse_dict(s):
     d = {}

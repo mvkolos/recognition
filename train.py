@@ -1,184 +1,117 @@
-
-
-
-    # torch.multiprocessing.set_start_method("forkserver")
-# if __name__ == '__main__':
-
-from utils.exp_logger import setup_logging
+# torch.multiprocessing.set_start_method("forkserver")
+from utils.exp_logger import setup_logging_from_config
 from huepy import yellow 
-from models.model import save_model
+# from models.model import save_model
 from munch import munchify
 from pathlib import Path
-from utils.argparse_utils import MyArgumentParser
-from utils.io_utils import save_yaml
-from utils.utils import setup, get_args_and_modules
 
-from contrib.optimizers import get_optimizer
-from contrib.schedulers import get_scheduler
-from contrib.savers     import get_saver
-
-from contrib.criterions.criterions import get_criterion
+from utils.io_utils import save_yaml, load_yaml
+from utils.eval import eval_modules, eval_paths
+from utils.utils import setup
 
 import argparse
-# import colored_traceback.auto
-import importlib
-import json
-
 import os
-import signal
 import sys
 import time
 import torch
 import torch.multiprocessing
 
+FILE_PATH = os.path.abspath(os.path.dirname(__file__))
+RECOGNITION_PATH = os.path.abspath(FILE_PATH + '/..')
 
 torch.multiprocessing.set_sharing_strategy('file_system')
+torch.autograd.set_detect_anomaly(True)
 
-# Define main args
-parser = MyArgumentParser(conflict_handler='resolve')
-parser.add = parser.add_argument
+def get_args():
+    parser = argparse.ArgumentParser()
 
-parser.add('--extension',  type=str, default="")
-parser.add('--config_name', type=str, default="")
+    parser.add_argument('--config', type=str, default='config.yml')
+    return parser
 
-parser.add('--model',      type=str, default="", help='')
-parser.add('--dataloader', type=str, default="", help='')
-parser.add('--runner',     type=str, default="", help='')
-
-parser.add('--experiments_dir', type=Path, default="experiments", help='')
-
-# Criterion 
-parser.add('--criterion',      type=str, default="", help='')
-parser.add('--criterion_args', type=str, default="",  help='separated with "^" list of args i.e. "lr=1e-3^betas=(0.5,0.9)"')
-
-# Optimizer 
-parser.add('--optimizer',      type=str, default='SGD', help='Just any type of comment')
-parser.add('--optimizer_args', type=str, default="lr=3e-3^momentum=0.9")
-
-# Scheduler 
-parser.add('--scheduler', type=str, default='ReduceLROnPlateau', help='Just any type of comment')
-parser.add('--scheduler_args', default="factor=0.5^min_lr=1e-6^verbose=True^patience=3", type=str, help='separated with "^" list of args i.e. "lr=1e-3^betas=(0.5,0.9)"')
-
-# Training loop
-parser.add('--stage', type=str, default=None)
-parser.add('--num_epochs',      type=int, default=200)
-parser.add('--set_eval_mode_in_train', action='store_bool', default=False)
-parser.add('--set_eval_mode_in_test',  action='store_bool', default=True)
-parser.add('--set_eval_mode_epoch', default=-1, type=int)
-parser.add('--save_frequency',  type=int, default=1, help='')
-
-# Logging
-parser.add('--logging', default=True, action="store_bool")
-parser.add('--args-to-ignore', type=str, default="checkpoint,splits_dir,experiments_dir,extension")
-parser.add('--comment',         type=str, default='', help='Just any type of comment')
-
-# Misc
-parser.add('--random_seed',     type=int, default=123, help='Random seed')
-parser.add('--device', type=str, default='cuda' ,choices=['cuda', 'cpu'])
-
-
+parser = get_args()
 
 
 # Gather args across modules
-args, default_args, m = get_args_and_modules(parser)
+args = parser.parse_args()
+
+config = load_yaml(args.config)
+extension = config['extension']
+sys.path.append(RECOGNITION_PATH)
+sys.path.append(f'extensions/{extension}')
 
 
 # Setup logging and creates save dir
-if args.logging:
-    args.experiment_dir, writer = setup_logging(args, 
-                                                default_args, 
-                                                args.args_to_ignore.split(','), 
-                                                exp_name_use_date=True)
-
-    args.experiment_dir = Path(args.experiment_dir)
-
+writer = setup_logging_from_config(config, exp_name_use_date=True)
 
 # Dump args
-save_yaml(vars(args), f'{args.experiment_dir}/args.yaml')
+save_yaml(config, Path(config['experiment_dir'])/'config.yml')
+
+eval_modules(config)
+eval_paths(config)
+
+config['dumps_dir'] = config['experiment_dir']/'dumps'
+
+
 
 # Setup everything else
-setup(args)
-
+# setup(config)
 
 # Load dataloaders
-model_native_transform = m['model'].get_native_transform()
-dataloader_train       = m['dataloader'].get_dataloader(args, model_native_transform, part='train', phase='train')
-dataloader_val         = m['dataloader'].get_dataloader(args, model_native_transform, part='val',   phase='val')
+data_factory = config['data_factory_fn'](config)
+    
+dataloader_train = data_factory.make_loader(is_train=True)
+dataloader_val = data_factory.make_loader(is_train=False)
 
+print(len(dataloader_train), len(dataloader_val))
+wrapper = config['wrapper_fn']()
+pipeline = wrapper.get_pipeline(config, data_factory)#.to(device)
+     
+train_factory = config['train_factory_fn']
 
-# Load criterion
-criterion = get_criterion(args.criterion, args).to(args.device)
-
-
-# Load model 
-model = m['model'].get_net(args, dataloader_train, criterion)
+# Load runner
+runner = config['runner_fn']#(config)
 
 # Load saver
-saver = get_saver('DummySaver')
-
-# Dump args (if modified)
-save_yaml(vars(args), f'{args.experiment_dir}/args_modified.yaml')
+# saver = get_saver('DummySaver')
 
 
 
-
-def set_param_grad(model, value, set_eval_mode=True):
-    for param in model.parameters():
-        param.requires_grad = value
+# def set_param_grad(model, value, set_eval_mode=True):
+#     for param in model.parameters():
+#         param.requires_grad = value
     
-    if set_eval_mode:
-        model.eval()
-
-# Process stages
-if 'stages' not in vars(args): 
-    args.stages = {'main': {}}
-
-
-if args.stage is not None:
-
-    if args.stage != 'none':
-        args.stages = {args.stage: args.stages[args.stage]}
-    else:
-        args.stages = {'main': {}}
+#     if set_eval_mode:
+#         model.eval()
 
 # Run 
-for stage_num, (stage_name, stage_args_) in enumerate(args.stages.items()):
+for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
 
     print (yellow(f' - Starting stage "{stage_name}"!'))
 
-    stage_args = munchify({**vars(args), **stage_args_ })
+    stage_args = munchify({**stage_args_, **config['train_args'] })    
 
-    if hasattr(model, 'module') and hasattr(model.module, 'feature_extractor'): 
-    #stage_args.fix_feature_extractor:
-        set_param_grad(model.module.feature_extractor, value=not stage_args.fix_feature_extractor, set_eval_mode=False)
-        # set_param_grad(model.module.feature_extractor[-1], value=True, set_eval_mode=False)
+    optimizers = train_factory.make_optimizers(stage_args, pipeline)
+    schedulers = train_factory.make_schedulers(stage_args, optimizers, pipeline)
     
+    criterion = train_factory.make_criterion(stage_args)
 
-    optimizer = get_optimizer(stage_args, model)
-    scheduler = get_scheduler(stage_args, optimizer)
+#     if args.fp16:
+#         import apex 
 
-    if args.fp16:
-        import apex 
-
-        optimizer = apex.fp16_utils.FP16_Optimizer(optimizer, dynamic_loss_scale=True, verbose=False)
-    else:
-        optimizer.backward = lambda x: x.backward()
+#         optimizer = apex.fp16_utils.FP16_Optimizer(optimizer, dynamic_loss_scale=True, verbose=False)
+#     else:
+#         optimizer.backward = lambda x: x.backward()
         
     # Go
-    for epoch in range(0, stage_args.num_epochs):
-
-        if stage_args.set_eval_mode_in_train or (stage_args.set_eval_mode_epoch >= 0 and epoch>=stage_args.set_eval_mode_epoch):
-            print(yellow(f' - Setting eval mode!'))
-            model.eval()
-        else:
-            model.train()
+    for epoch in range(0, stage_args.num_epochs):        
+        pipeline.train()
 
 
         # ===================
         #       Train
         # ===================
         with torch.set_grad_enabled(True):
-            m['runner'].run_epoch(dataloader_train, model, criterion, optimizer, epoch, stage_args, phase='train', writer=writer, saver=saver)
+            runner.run_epoch(dataloader_train, pipeline, criterion, optimizers, epoch, stage_args, phase='train', writer=writer)
         
 
 
@@ -187,17 +120,18 @@ for stage_num, (stage_name, stage_args_) in enumerate(args.stages.items()):
         # ===================
         torch.cuda.empty_cache()
         
-        if stage_args.set_eval_mode_in_test:
-            model.eval()
-        else:
-            model.train()
+        pipeline.eval()
 
         with torch.set_grad_enabled(False):
-            val_loss = m['runner'].run_epoch(dataloader_val, model, criterion, None, epoch, stage_args, phase='val', writer=writer, saver=saver)
+            val_loss = runner.run_epoch(dataloader_val, pipeline, criterion, None, epoch, stage_args, phase='val', writer=writer)
         
-        scheduler.step(val_loss)
+        for k, scheduler in schedulers.items():
+            scheduler.step(val_loss)
 
 
         # Save
         if epoch % stage_args.save_frequency == 0:
-            save_model(model, epoch, stage_args, optimizer, stage_num)
+            pipeline.save(config['dumps_dir'], epoch)
+            if stage_args.save_optimizers:
+                torch.save(optimizers, config['dumps_dir']/f'optimizers{epoch}')
+#             save_model(model, epoch, stage_args, optimizer, stage_num)

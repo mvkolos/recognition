@@ -6,12 +6,13 @@ from pathlib import Path
 from huepy import *
 import os.path
 import subprocess
+from collections import defaultdict
 
 class MySummaryWriter(SummaryWriter):
     def __init__(self, *args, **kwargs):
         super(MySummaryWriter, self).__init__(*args, **kwargs)
-        
-        self.last_it = 0 
+        self.counters = defaultdict(int)
+#         self.last_it = 0 
 
 
 class TeeLogger(object):
@@ -38,11 +39,11 @@ class TeeLogger(object):
         pass
 
 
-def get_postfix(args, default_args, args_to_ignore, delimiter='__'):
+def get_postfix(args, args_to_ignore, delimiter='__'):
     s = []
 
     for arg in sorted(args.keys()):
-        if not isinstance(arg, Path) and arg not in args_to_ignore and default_args[arg] != args[arg]:
+        if not isinstance(arg, Path) and arg not in args_to_ignore:
             s += [f"{arg}^{args[arg]}"]
     
     return delimiter.join(s).replace('/', '+')#.replace(';', '+')
@@ -117,8 +118,8 @@ def setup_logging(args, default_args, args_to_ignore, exp_name_use_date=False, a
 
     writer = MySummaryWriter(log_dir = save_dir, filename_suffix='_train') if tensorboard else None
     
-
-    l = TeeLogger(get_log_path(save_dir, postfix), writer)
+    log_path = save_dir/'log.log'
+    l = TeeLogger(log_path, writer)
     sys.stdout, sys.stderr = l, l
 
     print_experiment_info(args, default_args, save_dir)
@@ -131,3 +132,55 @@ def setup_logging(args, default_args, args_to_ignore, exp_name_use_date=False, a
 
 
     return save_dir, writer
+
+def setup_logging_from_config(config, exp_name_use_date=False, tensorboard=True):
+
+    time = datetime.datetime.now()
+
+#     postfix = get_postfix(vars(args), vars(default_args), args_to_ignore)
+    if exp_name_use_date:
+        postfix = time.strftime(f"%m-%d_%H-%M")
+
+    save_dir = os.path.join(config['experiments_dir'], postfix)
+    os.makedirs(os.path.join(save_dir, 'dumps'), exist_ok=True)
+    config['experiment_dir'] = save_dir
+
+    if config['archive_code']:
+
+        paths = [f"extensions/{args.extension}/models/{config['model']}.py",
+                 f"extensions/{args.extension}/dataloaders/{config['dataloader']}.py",
+                 f"extensions/{args.extension}/runners/{config['runner']}.py",
+                 f"models/{args.model}.py",
+                 f"dataloaders/{args.dataloader}.py",
+                 f"runners/{args.runner}.py"
+        ]
+
+        s = ''
+        for p in paths:
+            if os.path.exists(p):
+                s += f' <(echo {p})'
+
+        cmd = f'cat <(git ls-files)'\
+              f' <(cd extensions/{args.extension} && git ls-files | awk \'$0="extensions/{args.extension}/"$0\')'\
+              f'{s}'\
+              f' | sort -u | tar Tczf - "{save_dir}/source.tar.gz"'
+
+              
+        print(cmd)
+        subprocess.call(["bash","-c",cmd])
+    
+
+
+    writer = MySummaryWriter(log_dir = save_dir, filename_suffix='_train') if tensorboard else None
+    
+
+    l = TeeLogger(get_log_path(save_dir, postfix), writer)
+    sys.stdout, sys.stderr = l, l
+
+    # Log current name
+    with open ('experiments.log', 'a') as f:
+        f.write(f'{time.strftime("%I:%M%p on %B %d, %Y")}: '
+                f'{save_dir}\n')
+
+
+    return writer
