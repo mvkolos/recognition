@@ -93,6 +93,9 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
     optimizers = train_factory.make_optimizers(stage_args, pipeline)
     schedulers = train_factory.make_schedulers(stage_args, optimizers, pipeline)
     
+    
+    print('schedulers', schedulers)
+    train_factory.set_trainable(stage_args, pipeline)
     criterion = train_factory.make_criterion(stage_args)
 
 #     if args.fp16:
@@ -121,17 +124,25 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
         torch.cuda.empty_cache()
         
         pipeline.eval()
-
+        
+        
         with torch.set_grad_enabled(False):
-            val_loss = runner.run_epoch(dataloader_val, pipeline, criterion, None, epoch, stage_args, phase='val', writer=writer)
+            if stage_args.supervised_eval:
+                val_loss = runner.run_epoch(dataloader_val, pipeline, criterion, None, epoch, stage_args, phase='val', writer=writer)
+            else:
+                runner.evaluate(dataloader_val, pipeline, epoch, stage_args, writer)
+            
         
         for k, scheduler in schedulers.items():
-            scheduler.step(val_loss)
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau) and stage_args.supervised_eval:
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
 
 
         # Save
         if epoch % stage_args.save_frequency == 0:
-            pipeline.save(config['dumps_dir'], epoch)
+            pipeline.save(config['dumps_dir'], epoch, stage_args)
             if stage_args.save_optimizers:
                 torch.save(optimizers, config['dumps_dir']/f'optimizers{epoch}')
 #             save_model(model, epoch, stage_args, optimizer, stage_num)
