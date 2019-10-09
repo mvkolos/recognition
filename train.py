@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import torch
+from torch import nn
 import torch.multiprocessing
 
 FILE_PATH = os.path.abspath(os.path.dirname(__file__))
@@ -97,6 +98,10 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
     print('schedulers', schedulers)
     train_factory.set_trainable(stage_args, pipeline)
     criterion = train_factory.make_criterion(stage_args)
+    
+    if stage_args.parallel:
+        pipeline = nn.DataParallel(pipeline)
+        print(pipeline)
 
 #     if args.fp16:
 #         import apex 
@@ -108,7 +113,14 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
     # Go
     for epoch in range(0, stage_args.num_epochs):        
         pipeline.train()
-
+        
+#         if epoch % stage_args.save_frequency == 0:
+#             if isinstance(pipeline, nn.DataParallel):
+#                 pipeline.module.save(config['dumps_dir'], epoch, stage_args)
+#             else:
+#                 pipeline.save(config['dumps_dir'], epoch, stage_args)
+#             if stage_args.save_optimizers:
+#                 torch.save(optimizers, config['dumps_dir']/f'optimizers{epoch}')
 
         # ===================
         #       Train
@@ -142,7 +154,10 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
 
         # Save
         if epoch % stage_args.save_frequency == 0:
-            pipeline.save(config['dumps_dir'], epoch, stage_args)
+            if isinstance(pipeline, nn.DataParallel):
+                pipeline.module.save(config['dumps_dir'], epoch, stage_args)
+            else:
+                pipeline.save(config['dumps_dir'], epoch, stage_args)
             if stage_args.save_optimizers:
                 torch.save(optimizers, config['dumps_dir']/f'optimizers{epoch}')
 #             save_model(model, epoch, stage_args, optimizer, stage_num)
