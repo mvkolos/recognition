@@ -18,6 +18,9 @@ def eval_modules(config):
 def eval_paths(config):
     for arg in config:
         if isinstance(arg, str) and arg.endswith('_dir'):
-            config[arg] = Path(config[arg])
+            if config[arg]:
+                config[arg] = Path(config[arg])
+            else:
+                config[arg] = None
         elif isinstance(config[arg], dict):
             eval_paths(config[arg])
