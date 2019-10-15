@@ -99,6 +99,8 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
     train_factory.set_trainable(stage_args, pipeline)
     criterion = train_factory.make_criterion(stage_args)
     
+    print('criterion', criterion)
+    
     if stage_args.parallel:
         pipeline = nn.DataParallel(pipeline)
         print(pipeline)
@@ -111,7 +113,9 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
 #         optimizer.backward = lambda x: x.backward()
         
     # Go
-    for epoch in range(0, stage_args.num_epochs):        
+    for epoch in range(0, stage_args.num_epochs):
+        dumps_dir = config['dumps_dir']/str(epoch)
+        os.makedirs(dumps_dir, exist_ok=True)
         pipeline.train()
         
 #         if epoch % stage_args.save_frequency == 0:
@@ -121,12 +125,12 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
 #                 pipeline.save(config['dumps_dir'], epoch, stage_args)
 #             if stage_args.save_optimizers:
 #                 torch.save(optimizers, config['dumps_dir']/f'optimizers{epoch}')
-
+        
         # ===================
         #       Train
         # ===================
         with torch.set_grad_enabled(True):
-            runner.run_epoch(dataloader_train, pipeline, criterion, optimizers, epoch, stage_args, phase='train', writer=writer)
+            runner.run_epoch(dataloader_train, pipeline, criterion, optimizers, epoch, stage_args, phase='train', writer=writer, dumps_dir=dumps_dir)
         
 
 
