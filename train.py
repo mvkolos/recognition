@@ -95,15 +95,15 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
     schedulers = train_factory.make_schedulers(stage_args, optimizers, pipeline)
     
     
-    print('schedulers', schedulers)
+    print('schedulers', schedulers.keys())
     train_factory.set_trainable(stage_args, pipeline)
-    criterion = train_factory.make_criterion(stage_args)
+    criterions = train_factory.make_criterions(stage_args)
     
-    print('criterion', criterion)
+    print('criterions', criterions.keys())
     
     if stage_args.parallel:
         pipeline = nn.DataParallel(pipeline)
-        print(pipeline)
+#         print(pipeline)
 
 #     if args.fp16:
 #         import apex 
@@ -130,7 +130,7 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
         #       Train
         # ===================
         with torch.set_grad_enabled(True):
-            runner.run_epoch(dataloader_train, pipeline, criterion, optimizers, epoch, stage_args, phase='train', writer=writer, dumps_dir=dumps_dir)
+            runner.run_epoch(dataloader_train, pipeline, criterions, optimizers, epoch, stage_args, phase='train', writer=writer, dumps_dir=dumps_dir)
         
 
 
@@ -144,7 +144,7 @@ for stage_num, (stage_name, stage_args_) in enumerate(config['stages'].items()):
         
         with torch.set_grad_enabled(False):
             if stage_args.supervised_eval:
-                val_loss = runner.run_epoch(dataloader_val, pipeline, criterion, None, epoch, stage_args, phase='val', writer=writer)
+                val_loss = runner.run_epoch(dataloader_val, pipeline, criterions, None, epoch, stage_args, phase='val', writer=writer, dumps_dir=dumps_dir)
             else:
                 runner.evaluate(dataloader_val, pipeline, epoch, stage_args, writer)
             
