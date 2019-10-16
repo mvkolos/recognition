@@ -8,10 +8,7 @@ def eval_modules(config):
             if not config[arg]:
                 config[arg] = None
                 continue
-            try:
-                config[arg] = pydoc.locate(config[arg])
-            except:
-                print(arg)
+            config[arg] = pydoc.locate(config[arg])
         elif isinstance(config[arg], dict):
             eval_modules(config[arg])
             
